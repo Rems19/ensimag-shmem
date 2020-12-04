@@ -9,9 +9,10 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <stdint.h>
-#include <sys/types.h>
 #include <SDL/SDL.h>
 #include <assert.h>
+#include <sys/mman.h>
+#include <fcntl.h>
 
 const int TAILLE_X = 800;
 const int TAILLE_Y = 600;
@@ -30,7 +31,7 @@ static int couleur;
 #define handle_SDL_error(msg) \
   do { fprintf(stderr, "SDL :" msg ", ligne %d \n", __LINE__); exit(EXIT_FAILURE); } while (0)
 
-static void put_pixel(SDL_Surface *surface, int x, int y, uint32_t pixel)
+static void put_pixel(SDL_Surface *surface, int _x, int _y, uint32_t pixel)
 {
     /*
       Remarque : le nombre d'octets par pixel est toujours 4 dans ce programme,
@@ -38,7 +39,7 @@ static void put_pixel(SDL_Surface *surface, int x, int y, uint32_t pixel)
      */
     int bpp = surface->format->BytesPerPixel;
     /* p est l'adresse du pixel qu'on veut modifier. */
-    uint8_t *p = (uint8_t *) surface->pixels + y * surface->pitch + x * bpp;
+    uint8_t *p = (uint8_t *) surface->pixels + _y * surface->pitch + _x * bpp;
     *(uint32_t *) p = pixel;
 }
 
@@ -83,7 +84,7 @@ static void draw_ball(SDL_Surface *canvas)
 }
 
 
-int main(int argc, char **argv)
+int main()
 {
     SDL_Surface *canvas = NULL;
     SDL_Surface *ecran = NULL;
@@ -111,21 +112,25 @@ int main(int argc, char **argv)
        On initialise les caractéristiques de la balle : position initiale,
        taille, couleur. Ces valeurs sont tirées aléatoirement.
     */
-    x = random() % TAILLE_X;
-    y = random() % TAILLE_Y;
-    delta_x = random() % 5 + 1;
-    delta_y = random() % 5 + 1;
-    taille = random() % 20 + 10;
-    couleur =
-        (random() % 256 << 16) | (random() % 256 << 8) | (random() % 255);
+    x = (int) random() % TAILLE_X;
+    y = (int) random() % TAILLE_Y;
+    delta_x = (int) random() % 5 + 1;
+    delta_y = (int) random() % 5 + 1;
+    taille = (int) random() % 20 + 10;
+    couleur = ((int) random() % 256 << 16) | ((int) random() % 256 << 8) | ((int) random() % 255);
 
   /********************
    * Le tampon a changer pour mettre en place le couplage mémoire
    * entre les différents processus.
    *********************/
-    void *tampon = calloc(TAILLE_X * TAILLE_Y, 4);
-    if (tampon == NULL)
-        handle_error("malloc");
+    int fd = shm_open("shared_mem", O_RDWR | O_CREAT | O_TRUNC, S_IRUSR | S_IWUSR);
+    if (fd == -1)
+        handle_error("shm_open");
+    if (ftruncate(fd, TAILLE_X * TAILLE_Y * 4) == -1)
+        handle_error("ftruncate");
+    void *tampon = mmap(NULL, TAILLE_X * TAILLE_Y * 4, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (tampon == MAP_FAILED)
+        handle_error("mmap");
 
     /* On associe ce tampon à la zone de dessin. */
     canvas =
@@ -174,7 +179,7 @@ int main(int argc, char **argv)
   fin:
     /* On libère la mémoire avant de s'arrêter. */
     SDL_FreeSurface(canvas);
-    free(tampon);
+    shm_unlink(tampon);
     SDL_Quit();
 
     return 0;
